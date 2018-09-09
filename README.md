@@ -1,7 +1,7 @@
 **University of Pennsylvania, CIS 565: GPU Programming and Architecture,
 Project 1 - Flocking**
 
-!(images/flocking.gif)
+![Flocking Particles](images/flocking.gif)
 
 * Salaar Kohari
   * [LinkedIn](https://www.linkedin.com/in/salaarkohari), [personal website](http://salaar.kohari.com)
@@ -19,7 +19,7 @@ The grid implementation involves dividing the space into a 3D grid and only chec
 
 For naive implementation, fps goes from 1940 (100/1,000 boids) to 565 (5,000 boids) dropping to 53 (20,000 boids). The time taken is directly related to the number of boids since it must check all boids on each thread to calculate flocking behavior.
 
-!(images/naiveFPS.png)
+![Naive FPS Analysis](images/naiveFPS.png)
 
 Grid implementations were attempted, but the program kept crashing. With GPU debug not working on the lab computer, I was unable to figure out the problem.
 
