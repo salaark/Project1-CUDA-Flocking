@@ -354,9 +354,8 @@ __global__ void kernComputeIndices(int N, int gridResolution,
 	if (index >= N)
 		return;
 
-	glm::vec3 gridPos = glm::vec3(pos[index].x - gridMin.x, pos[index].y - gridMin.y, pos[index].z - gridMin.z);
-	gridPos *= inverseCellWidth;
-	int gridCell = gridIndex3Dto1D(gridPos.x, gridPos.y, gridPos.z, gridResolution);
+    glm::vec3 gridPos = (pos[index] - gridMin) * inverseCellWidth;
+	int gridCell = gridIndex3Dto1D((int)gridPos.x, (int)gridPos.y, (int)gridPos.z, gridResolution);
 	indices[index] = index;
 	gridIndices[index] = gridCell;
 }
@@ -381,11 +380,17 @@ __global__ void kernIdentifyCellStartEnd(int N, int *particleGridIndices,
 		return;
 	
 	int currIdx = particleGridIndices[index];
-	int prevIdx = index > 0 ? particleGridIndices[index - 1] : -1;
-	if (currIdx != prevIdx) {
-		gridCellStartIndices[currIdx] = index;
-		if (prevIdx != -1)
-			gridCellEndIndices[prevIdx] = index - 1;
+    if (index == 0) {
+        gridCellStartIndices[currIdx] = index;
+        return;
+    }
+	int prevIdx = particleGridIndices[index - 1];
+    if (currIdx != prevIdx) {
+        gridCellStartIndices[currIdx] = index;
+        gridCellEndIndices[prevIdx] = index - 1;
+    }
+	if (index == N - 1) {
+		gridCellEndIndices[prevIdx] = index;
 	}
 }
 
@@ -407,9 +412,8 @@ __global__ void kernUpdateVelNeighborSearchScattered(
 	if (index >= N)
 		return;
 
-	glm::vec3 gridPos = glm::vec3(pos[index].x - gridMin.x, pos[index].y - gridMin.y, pos[index].z - gridMin.z);
-	gridPos *= inverseCellWidth;
-	int gridCell = gridIndex3Dto1D(gridPos.x, gridPos.y, gridPos.z, gridResolution);
+    glm::vec3 gridPos = (pos[index] - gridMin) * inverseCellWidth;
+	int gridCell = gridIndex3Dto1D((int)gridPos.x, (int)gridPos.y, (int)gridPos.z, gridResolution);
 
 	int neighborCells[8];
 	int neighborIdx = 0;
@@ -447,8 +451,15 @@ __global__ void kernUpdateVelNeighborSearchScattered(
 
 	for (int cellIdx = 0; cellIdx <= neighborIdx; cellIdx++) {
 		int cell = neighborCells[cellIdx];
-		for (int i = gridCellStartIndices[cell]; i <= gridCellEndIndices[cell]; ++i) {
+        int startIdx = gridCellStartIndices[cell];
+        int endIdx = gridCellEndIndices[cell];
+        if (startIdx == -1 || startIdx >= N || endIdx < startIdx || endIdx >= N)
+            continue;
+
+		for (int i = startIdx; i <= endIdx; ++i) {
 			int neighbor = particleArrayIndices[i];
+            if (neighbor == index)
+                continue;
 			
 			float distance = glm::distance(pos[neighbor], pos[index]);
 
@@ -526,20 +537,27 @@ void Boids::stepSimulationScatteredGrid(float dt) {
   // - Perform velocity updates using neighbor search
   // - Update positions
   // - Ping-pong buffers as needed
-	dim3 fullBlocksPerGrid((numObjects + blockSize - 1) / blockSize);
+    dim3 fullBlocksPerGrid((numObjects + blockSize - 1) / blockSize);
+
 	kernComputeIndices << <fullBlocksPerGrid, blockSize >> >(numObjects, gridSideCount, gridMinimum, gridInverseCellWidth,
 		dev_pos, dev_particleArrayIndices, dev_particleGridIndices);
 
-	//thrust::sort_by_key(dev_thrust_particleGridIndices, dev_thrust_particleGridIndices + numObjects, dev_thrust_particleArrayIndices);
+	thrust::sort_by_key(dev_thrust_particleGridIndices, dev_thrust_particleGridIndices + numObjects, dev_thrust_particleArrayIndices);
+
+    kernResetIntBuffer << <fullBlocksPerGrid, blockSize >> > (numObjects, dev_gridCellStartIndices, -1);
+    kernResetIntBuffer << <fullBlocksPerGrid, blockSize >> > (numObjects, dev_gridCellEndIndices, -1);
 
 	kernIdentifyCellStartEnd << <fullBlocksPerGrid, blockSize >> >
 		(numObjects, dev_particleGridIndices, dev_gridCellStartIndices, dev_gridCellEndIndices);
+
+    //kernUpdateVelocityBruteForce << <fullBlocksPerGrid, blockSize >> >(numObjects, dev_pos, dev_vel1, dev_vel2);
+
 	kernUpdateVelNeighborSearchScattered << <fullBlocksPerGrid, blockSize >> > (numObjects, gridSideCount, gridMinimum, gridInverseCellWidth,
 		gridCellWidth, dev_gridCellStartIndices, dev_gridCellEndIndices, dev_particleArrayIndices, dev_pos, dev_vel1, dev_vel2);
+
 	kernUpdatePos << <fullBlocksPerGrid, blockSize >> >(numObjects, dt, dev_pos, dev_vel1);
 
-	glm::vec3* tempVel;
-	tempVel = dev_vel1;
+    glm::vec3* tempVel = dev_vel1;
 	dev_vel1 = dev_vel2;
 	dev_vel2 = tempVel;
 }
